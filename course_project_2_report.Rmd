@@ -1,0 +1,168 @@
+---
+title: What are the effects on population health and the economy from severe weather
+  events?
+author: "Dr.Roberto Enrique Chang López"
+email: "rchang@unah.edu.hn"
+date: "12/10/2020"
+output:
+  html_document: default
+  pdf_document: default
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Synopsis
+
+The goal of this report is to explore the U.S. National Oceanic and Atmospheric Administration's (NOAA) storm data database to ascertain which types of severe weather events in the US are most harmful with respect to population health, and which types of events have the greatest economic consequences.
+
+The data from NOAA is provided as a CSV file and will be imported and processed.
+
+To assess the affect on population health, the number of fatalities and injuries associated with each event type will be assessed. The report will show that the events leading to the highest number of fatalities and injuries include Tornado and Excessive Heat events.
+
+To assess the economic consequences, the total cost in terms of property and crop damage for each event type will be calculated. The report will show that the events leading to the greatest cost to property and crops include Flood and Hurricane events.
+
+## Data Processing
+
+The data is supplied as a CSV file, and was downloaded from [here](https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2). Dcoumentation on the data can be found from the [National Weather Service Storm Data Documentation](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf) and [National Climatic Data Center Storm Events FAQ](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2FNCDC%20Storm%20Events-FAQ%20Page.pdf).
+
+For this analysis, the CSV file has been downloaded and is placed in the project directory. This file is to be read-in and explored:
+
+```{r loadlib, message=FALSE, warning=FALSE}
+library(tidyverse) # for importing, manipulating and plotting
+library(lubridate) # for handling dates
+```
+
+
+```{r reading, cache=TRUE}
+
+storm_data <- read_csv("repdata_data_StormData.csv.bz2")
+
+glimpse(storm_data)
+
+```
+
+There are some processing steps to be taken. After an initial exploration of the data (not shown), the following changes have been made:
+
+*  Filtering out older years in the data, where the recorded events are sparse. There are low numbers of events recorded yearly throughout the 50s, 60s and 70s, an arbitrary cut-off of 1980 has been used as event recording starts to increase from this point.
+*  Formatting of the `BGN_DATE` to a date variable.
+*  Some similar event categories have been grouped together. There are 977 unique storm event types (`EVTYPE`) present in the data, I have taken my best judgement to group some of the key event types together, without wanting to lose too much of the granularity that some descriptions provide.
+*  Property and crop damage amounts (`PROPDMG` and `CROPDMG`) have been calculated using their respective magnitude indicators (`PROPDMGEXP` and `CROPDMGEXP`) e.g. K for thousands etc
+
+
+```{r dataclean}
+storm_data_processed <- storm_data %>% 
+  # format date
+  mutate(BGN_DATE = mdy_hms(BGN_DATE)) %>% 
+  # filter out older years
+  filter(BGN_DATE >= as.Date("1980-01-01")) %>% 
+  # events grouped together
+  mutate(EVTYPE = str_to_upper(EVTYPE),
+         event = str_replace_all(EVTYPE, "TSTM|THUNDERSTORMS", "THUNDERSTORM"),
+         event = str_replace_all(event, "WINDS", "WIND")) %>% 
+  # calculate property and crop damage - if no valid code present then set to 0
+  mutate(prop_damage = case_when(str_to_upper(PROPDMGEXP) == "H" ~ PROPDMG*100,
+                                 str_to_upper(PROPDMGEXP) == "K" ~ PROPDMG*1000,
+                                 str_to_upper(PROPDMGEXP) == "M" ~ PROPDMG*10^6,
+                                 str_to_upper(PROPDMGEXP) == "B" ~ PROPDMG*10^9,
+                                 TRUE ~ 0),
+         crop_damage = case_when(str_to_upper(CROPDMGEXP) == "H" ~ CROPDMG*100,
+                                 str_to_upper(CROPDMGEXP) == "K" ~ CROPDMG*1000,
+                                 str_to_upper(CROPDMGEXP) == "M" ~ CROPDMG*10^6,
+                                 str_to_upper(CROPDMGEXP) == "B" ~ CROPDMG*10^9,
+                                 TRUE ~ 0))
+
+count(storm_data_processed, event, sort = TRUE) %>% View()
+
+```
+
+
+## Results
+
+Now the data has been processed, let's consider 2 questions in turn:
+
+### Across the United States, which types of events are most harmful with respect to population health?
+
+To answer this question let's assess the events against 2 measures: fatalities and injuries.
+
+Firstly, let's assess fatality:
+
+```{r}
+health_effect <- storm_data_processed %>% 
+  group_by(event) %>% 
+  summarise(fatalities_total = sum(FATALITIES),
+            injuries_total = sum(INJURIES),
+            events_total = n(),
+            fatality_rate = fatalities_total / events_total,
+            injury_rate = injuries_total / events_total) 
+
+top10_fatal <- health_effect %>% 
+  top_n(10, fatalities_total)
+
+ggplot(top10_fatal, aes(x = fct_reorder(event, fatalities_total), y = fatalities_total)) +
+  geom_col() +
+  coord_flip() +
+  scale_y_continuous(labels = scales::comma) +
+  theme_minimal() +
+  labs(title = "Tornado and heat have caused the highest number of fatalities",
+        subtitle = "Weather events since 1980 in the US with the highest number of fatalities",
+        y = "Total Fatalities",
+        x = "Event Type")
+```
+
+Tornado events have led to the highest number of fatalities, with excessive heat/heat also featuring highly. 
+
+Now let's assess the number of injuries:
+
+```{r}
+top10_injury <- health_effect %>% 
+  top_n(10, injuries_total)
+
+ggplot(top10_injury, aes(x = fct_reorder(event, injuries_total), y = injuries_total)) +
+  geom_col() +
+  coord_flip() +
+  scale_y_continuous(labels = scales::comma) +
+  theme_minimal() +
+  labs(title = "Tornado and thunderstorm wind have caused\nthe highest number of injuries",
+        subtitle = "Weather events since 1980 in the US with the highest number of injuries",
+        y = "Total Injuries",
+        x = "Event Type")
+```
+
+Once again, tornados have resulted in the highest number of injuries. They account for more than 3 times the number of the next highest cause of injuries, thunderstorm wind.
+
+Note that here we have been looking at total number of fatalities and injuries. These are likely to be higher overall for events which have occured the most often. It may also be insightful to assess the average number of fatalities and injuries per event. For example, although tornados have the highest number of fatalities, there is only a fatality rate of 0.06 fatalities per tornado event, where as excessive heat has more than 1 fatality per event. Likewise, in terms of injuries, excessive heat has a much higher rate at almost 4 injuries per event, compared to tornados which have less than 1 injury per event.  
+
+
+### Across the United States, which types of events have the greatest economic consequences?
+
+To answer this question, let's assess economic consequences in terms of cost of property and crop damage.
+
+```{r}
+eco_cost <- storm_data_processed %>% 
+  group_by(event) %>% 
+  summarise(cost = sum(prop_damage + crop_damage),
+            prop_cost = sum(prop_damage),
+            crop_cost = sum(crop_damage),
+            events_total = n(),
+            cost_rate = cost / events_total)
+
+eco_cost %>% 
+  top_n(10, cost) %>% 
+  ggplot(aes(x = fct_reorder(event, cost), y = cost/10^9)) +
+  geom_col() +
+  coord_flip() +
+  scale_y_continuous(labels = scales::comma) +
+  theme_minimal() +
+  labs(title = "Flooding has resulted in the most\nfinancial damage to property and crops",
+        subtitle = "Weather events since 1980 in the US with the most financial damage",
+        y = "Cost in Billions of dollars",
+        x = "Event Type")
+```
+
+Flooding has resulted in more than double the cost of property/crop damage compared to hurricanes/typhoons. However, the hurricane/typhoon event has only been recorded 88 times, so in terms of cost per event it is extremely costly. Tornado events appear highly again, as it did in terms of population health impact. Extreme heat does not appear despite it having a high health impact, however, drought does appear in the top 10, largely driven by crop damage costs.
+
+In conclusion, in terms of total impact on health, tornado events have the biggest adverse effects based on fatalities and injuries. However, in terms of the impact per event, excessive heat has a greater effect. Flooding has the biggest total impact on the economy, based on property and crop damage costs. However, hurricane/typhoon events have a greater cost per event.
